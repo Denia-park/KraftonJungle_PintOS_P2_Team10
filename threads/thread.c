@@ -11,6 +11,7 @@
 #include "threads/synch.h"
 #include "threads/vaddr.h"
 #include "intrinsic.h"
+#include "lib/limits.h"
 #ifdef USERPROG
 #include "userprog/process.h"
 #endif
@@ -27,6 +28,7 @@
 /* List of processes in THREAD_READY state, that is, processes
    that are ready to run but not actually running. */
 static struct list ready_list;
+static struct list sleep_list;
 
 /* Idle thread. */
 static struct thread *idle_thread;
@@ -44,6 +46,7 @@ static struct list destruction_req;
 static long long idle_ticks;    /* # of timer ticks spent idle. */
 static long long kernel_ticks;  /* # of timer ticks in kernel threads. */
 static long long user_ticks;    /* # of timer ticks in user programs. */
+static long long global_ticks = LLONG_MAX;
 
 /* Scheduling. */
 #define TIME_SLICE 4            /* # of timer ticks to give each thread. */
@@ -306,6 +309,21 @@ thread_yield (void) {
 		list_push_back (&ready_list, &curr->elem);
 	do_schedule (THREAD_READY);
 	intr_set_level (old_level);
+}
+
+void
+thread_awake (void) {
+
+}
+
+void
+thread_sleep (void) {
+
+}
+
+void
+update_next_global_tick (){
+	
 }
 
 /* Sets the current thread's priority to NEW_PRIORITY. */
