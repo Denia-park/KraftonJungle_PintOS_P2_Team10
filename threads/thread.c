@@ -319,8 +319,6 @@ thread_awake (int64_t ticks) {
 
 	int64_t next_awake_ticks = INT64_MAX;
 
-	printf("end : %x \n",list_end (&sleep_list));
-
 	old_level = intr_disable ();
 
     for (cur_e = list_begin (&sleep_list);
@@ -360,10 +358,8 @@ thread_sleep (int64_t ticks) {
 	}
 
 	old_level = intr_disable ();
-	printf("test: %x \n", &(curr->elem));
 	if (curr != idle_thread)
 		list_push_back (&sleep_list, &curr->elem);
-	printf("test prev: %x \n", (&(curr->elem))->prev);
 	do_schedule (THREAD_BLOCKED);
 	intr_set_level (old_level);
 }
