@@ -46,7 +46,7 @@ static struct list destruction_req;
 static long long idle_ticks;    /* # of timer ticks spent idle. */
 static long long kernel_ticks;  /* # of timer ticks in kernel threads. */
 static long long user_ticks;    /* # of timer ticks in user programs. */
-static long long global_ticks = LLONG_MAX;
+static long long global_ticks = INT64_MAX;
 
 /* Scheduling. */
 #define TIME_SLICE 4            /* # of timer ticks to give each thread. */
@@ -111,6 +111,7 @@ thread_init (void) {
 	/* Init the globla thread context */
 	lock_init (&tid_lock);
 	list_init (&ready_list);
+	list_init (&sleep_list);
 	list_init (&destruction_req);
 
 	/* Set up a thread structure for the running thread. */
@@ -312,18 +313,69 @@ thread_yield (void) {
 }
 
 void
-thread_awake (void) {
+thread_awake (int64_t ticks) {
+	struct list_elem *cur_e;
+	enum intr_level old_level;
 
+	int64_t next_awake_ticks = INT64_MAX;
+
+	printf("end : %x \n",list_end (&sleep_list));
+
+	old_level = intr_disable ();
+
+    for (cur_e = list_begin (&sleep_list);
+        cur_e != list_end (&sleep_list);
+        ) {
+
+        struct thread *cur_thread = list_entry (cur_e, struct thread, elem);
+
+	    if (cur_thread ->local_ticks <= ticks){
+			cur_e = list_remove(cur_e);
+			thread_unblock(cur_thread);
+		} else {
+			if(cur_thread -> local_ticks < next_awake_ticks){
+				next_awake_ticks = cur_thread -> local_ticks;
+			}
+			cur_e = list_next (cur_e);
+		}	
+    }
+
+	update_next_global_tick(next_awake_ticks);
+
+	intr_set_level (old_level);
 }
 
 void
-thread_sleep (void) {
+thread_sleep (int64_t ticks) {
+	struct thread *curr = thread_current ();
+	enum intr_level old_level;
 
+	ASSERT (!intr_context ());
+
+    if(ticks < get_next_tick_to_awake()){
+		update_next_global_tick(ticks);
+	}
+	if(ticks < curr->local_ticks){
+		curr->local_ticks = ticks;
+	}
+
+	old_level = intr_disable ();
+	printf("test: %x \n", &(curr->elem));
+	if (curr != idle_thread)
+		list_push_back (&sleep_list, &curr->elem);
+	printf("test prev: %x \n", (&(curr->elem))->prev);
+	do_schedule (THREAD_BLOCKED);
+	intr_set_level (old_level);
+}
+
+int64_t
+get_next_tick_to_awake(void){
+	return global_ticks;
 }
 
 void
-update_next_global_tick (){
-	
+update_next_global_tick (int64_t ticks){
+	global_ticks = ticks;
 }
 
 /* Sets the current thread's priority to NEW_PRIORITY. */
@@ -427,6 +479,7 @@ init_thread (struct thread *t, const char *name, int priority) {
 	t->tf.rsp = (uint64_t) t + PGSIZE - sizeof (void *);
 	t->priority = priority;
 	t->magic = THREAD_MAGIC;
+	t->local_ticks = INT64_MAX;
 }
 
 /* Chooses and returns the next thread to be scheduled.  Should
