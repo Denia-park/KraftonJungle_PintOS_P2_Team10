@@ -665,3 +665,15 @@ void update_next_tick_to_awake(int64_t ticks){
 int64_t get_next_tick_to_awake(void){
 	return next_tick_to_awake;
 }
+
+bool cmp_sem_priority(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED){
+
+	struct thread *list_entry_a = list_entry(a, struct thread, d_elem);
+	struct thread *list_entry_b = list_entry(b, struct thread, d_elem);
+
+	if (list_entry_a -> priority > list_entry_b -> priority)
+		return true;
+	else
+		return false ;
+}
+
