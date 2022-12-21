@@ -216,8 +216,10 @@ thread_create (const char *name, int priority,
 	t->tf.cs = SEL_KCSEG;
 	t->tf.eflags = FLAG_IF;
 
-	/* Add to run queue. */
 	thread_unblock (t);
+	/* create 후 ready_list에 add 시 new thread와 current thread의 우선순위 비교, 
+	만약 새로운 쓰레드의 우선순위가 더 높으면 schedule 호출하고 현재 쓰레드는 yield */
+	test_max_priority();
 
 	return tid;
 }
@@ -252,7 +254,7 @@ thread_unblock (struct thread *t) {
 
 	old_level = intr_disable ();
 	ASSERT (t->status == THREAD_BLOCKED);
-	list_push_back (&ready_list, &t->elem);
+	list_insert_ordered (&ready_list, &t->elem, cmp_priority, 0);
 	t->status = THREAD_READY;
 	intr_set_level (old_level);
 }
@@ -315,7 +317,7 @@ thread_yield (void) {
 
 	old_level = intr_disable ();
 	if (curr != idle_thread)
-		list_push_back (&ready_list, &curr->elem);
+		list_insert_ordered (&ready_list, &curr->elem, cmp_priority, 0);
 	do_schedule (THREAD_READY);
 	intr_set_level (old_level);
 }
@@ -373,9 +375,13 @@ thread_sleep (int64_t ticks) {
 
 
 /* Sets the current thread's priority to NEW_PRIORITY. */
+/* 새로운 priority로 변경 후 current thread와 
+current thread priority 변경*/
 void
 thread_set_priority (int new_priority) {
-	thread_current ()->priority = new_priority;
+	thread_current ()->origin_priority = new_priority;
+	refresh_priority();
+	test_max_priority();
 }
 
 /* Returns the current thread's priority. */
@@ -475,6 +481,12 @@ init_thread (struct thread *t, const char *name, int priority) {
 
 	t->magic = THREAD_MAGIC;
 	t->tick_to_awake = INT64_MAX;
+	
+	/* 도네이션 리스트 초기화 */ 
+	t->origin_priority = priority;
+	t->wait_on_lock = NULL;
+	list_init(&t->donation_list); 
+
 }
 
 /* Chooses and returns the next thread to be scheduled.  Should
@@ -654,6 +666,7 @@ allocate_tid (void) {
 
 	return tid;
 }
+
 /* global tick 업데이트 함수 */
 void update_next_tick_to_awake(int64_t ticks){
 	if (ticks < get_next_tick_to_awake()){
@@ -665,7 +678,88 @@ int64_t get_next_tick_to_awake(void){
 	return next_tick_to_awake;
 }
 
-bool cmp_sem_priority(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED){
+
+/* ready_list에서 priorty가 가장 높은 쓰레드와 현재 쓰레드의 우선 순위를 비교 */
+void 
+test_max_priority(void) {
+	if (list_empty(&ready_list)) {
+		return;
+	}
+
+	int run_priority = thread_current()->priority;
+	struct list_elem *e = list_begin(&ready_list);
+	struct thread *t = list_entry(e, struct thread, elem);
+
+	if (t->priority > run_priority) {
+		thread_yield();
+	}
+}
+
+/* 첫 번째 인자의 우선순위가 높으면 1을 반환, 두 번째 인자의 우선순위가 높으면 0을 반환 
+a가 리스트에 들어가는 element이고 들어갈 위치를 확인해야함. */
+bool
+cmp_priority(const struct list_elem *a, const struct list_elem *b, void *aux) {
+	struct thread *a_tp = list_entry(a, struct thread, elem);
+	struct thread *b_tp = list_entry(b, struct thread, elem);
+
+	return a_tp->priority > b_tp->priority;
+}
+
+
+// 우선 순위 기부
+void
+donate_priority(void) {
+	// cpu에 잠깐 올라간 우선순위 높은 thread
+	struct thread *curr = thread_current();
+	for (int nest_depth = 0; nest_depth < 8; nest_depth++)
+	{
+		// 다음이 없으면 반복문 종료
+		if (!curr->wait_on_lock)
+			break;
+		// waiters로 쫓겨난 thread (curr이 원하는 lock을 가지고 있던 thread)
+		struct thread *holder = curr->wait_on_lock->holder;
+		// curr의 높은 우선 순위를 자리 잠깐 뺏긴 thread에게 우선순위를 기부
+		holder->priority = curr->priority;
+		// holder에 딸린 wait on lock 순회 탐색
+		curr = holder;
+	}
+}
+
+// donation list에서 쓰레드 엔트리 제거
+void
+remove_with_lock(struct lock *lock) {
+	struct list_elem *e;
+  	struct thread *cur = thread_current ();
+
+	for (e = list_begin (&cur->donation_list); e != list_end (&cur->donation_list); e = list_next (e)){
+		struct thread *t = list_entry (e, struct thread, d_elem);
+		if (t->wait_on_lock == lock)
+			list_remove (&t->d_elem);
+	}
+}
+
+// 우선 순위 다시 계산
+void
+refresh_priority(void) {
+    struct thread *curr = thread_current();
+    struct list *d_list = &(curr->donation_list);
+    curr->priority = curr->origin_priority;
+
+    int tmp_priority = 0;
+	if (list_empty(d_list))
+		return ;
+
+    for (struct list_elem *d_e  = list_front(d_list); d_e != list_end(d_list); d_e = list_next(d_e))
+    {
+        struct thread *tmp = list_entry(d_e, struct thread, d_elem);
+		
+        tmp_priority = max(tmp_priority, tmp->priority);
+    }
+    curr->priority = max(tmp_priority, curr->priority);
+}
+
+bool
+cmp_sem_priority(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED){
 
 	struct thread *list_entry_a = list_entry(a, struct thread, d_elem);
 	struct thread *list_entry_b = list_entry(b, struct thread, d_elem);
