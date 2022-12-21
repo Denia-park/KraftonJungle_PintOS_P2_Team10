@@ -66,7 +66,9 @@ sema_down (struct semaphore *sema) {
 
 	old_level = intr_disable ();
 	while (sema->value == 0) {
-		list_push_back (&sema->waiters, &thread_current ()->elem);
+		/* 세마포의 값이 0이면, 현재스레드를 BLOCK 으로 변경 후 schedule() 호출 */
+		// list_push_back (&sema->waiters, &thread_current ()->elem);
+		list_insert_ordered(&sema->waiters, &thread_current()->elem, cmp_priority, 0 );
 		thread_block ();
 	}
 	sema->value--;
