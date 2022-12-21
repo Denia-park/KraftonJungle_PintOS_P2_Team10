@@ -111,10 +111,17 @@ sema_up (struct semaphore *sema) {
 	ASSERT (sema != NULL);
 
 	old_level = intr_disable ();
-	if (!list_empty (&sema->waiters))
+	if (!list_empty (&sema->waiters)){
+	/* watier_list에 있는 쓰레드의 우선순위가 변경 되었을 경우를 고려하여 list_sort를 사용해
+		watier list 정렬 */	
+		list_sort(&sema->waiters, cmp_priority, 0);
+	/* waiters에 스레드가 존재하면 리스트 맨 처음에 위치한 스레드를 ready상태로 변경 후 schedule 호출 */
 		thread_unblock (list_entry (list_pop_front (&sema->waiters),
 					struct thread, elem));
+
+	}
 	sema->value++;
+	test_max_priority();
 	intr_set_level (old_level);
 }
 
@@ -152,7 +159,7 @@ sema_test_helper (void *sema_) {
 		sema_up (&sema[1]);
 	}
 }
-
+
 /* Initializes LOCK.  A lock can be held by at most a single
    thread at any given time.  Our locks are not "recursive", that
    is, it is an error for the thread currently holding a lock to
