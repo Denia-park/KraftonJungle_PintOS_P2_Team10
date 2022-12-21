@@ -111,6 +111,13 @@ struct thread {
 	/* Owned by thread.c. */
 	struct intr_frame tf;               /* Information for switching */
 	unsigned magic;                     /* Detects stack overflow. */
+
+	int origin_priority;	   // origin priority
+	struct lock *wait_on_lock; //쓰레드가 기다리고 있는 lock 자료구조 주소 저장 
+	struct list donation_list; // donation 리스트 (multiple donation)
+
+	/* Shared between thread.c and synch.c. */
+	struct list_elem d_elem; // 도네이션 element
 };
 
 /* If false (default), use round-robin scheduler.
