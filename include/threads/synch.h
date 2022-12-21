@@ -6,7 +6,7 @@
 
 /* A counting semaphore. */
 struct semaphore {
-	unsigned value;             /* Current value. */
+	unsigned value;             /* 현재 공유자원의 접근할 수 있는 사용자 수 */
 	struct list waiters;        /* List of waiting threads. */
 };
 
@@ -46,3 +46,9 @@ void cond_broadcast (struct condition *, struct lock *);
 #define barrier() asm volatile ("" : : : "memory")
 
 #endif /* threads/synch.h */
+
+#define max(a, b) (((a) > (b)) ? (a) : (b))
+bool cmp_sem_priority(const struct list_elem *a, const struct list_elem *b, void *aux);
+void donate_priority(void);
+void remove_with_lock(struct lock *lock);
+void refresh_priority(void);

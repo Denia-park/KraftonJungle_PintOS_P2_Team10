@@ -66,7 +66,9 @@ sema_down (struct semaphore *sema) {
 
 	old_level = intr_disable ();
 	while (sema->value == 0) {
-		list_push_back (&sema->waiters, &thread_current ()->elem);
+		/* 세마포의 값이 0이면, 현재스레드를 BLOCK 으로 변경 후 schedule() 호출 */
+		// list_push_back (&sema->waiters, &thread_current ()->elem);
+		list_insert_ordered(&sema->waiters, &thread_current()->elem, cmp_priority, 0 );
 		thread_block ();
 	}
 	sema->value--;
@@ -109,10 +111,17 @@ sema_up (struct semaphore *sema) {
 	ASSERT (sema != NULL);
 
 	old_level = intr_disable ();
-	if (!list_empty (&sema->waiters))
+	if (!list_empty (&sema->waiters)){
+	/* watier_list에 있는 쓰레드의 우선순위가 변경 되었을 경우를 고려하여 list_sort를 사용해
+		watier list 정렬 */	
+		list_sort(&sema->waiters, cmp_priority, 0);
+	/* waiters에 스레드가 존재하면 리스트 맨 처음에 위치한 스레드를 ready상태로 변경 후 schedule 호출 */
 		thread_unblock (list_entry (list_pop_front (&sema->waiters),
 					struct thread, elem));
+
+	}
 	sema->value++;
+	test_max_priority();
 	intr_set_level (old_level);
 }
 
@@ -150,7 +159,7 @@ sema_test_helper (void *sema_) {
 		sema_up (&sema[1]);
 	}
 }
-
+
 /* Initializes LOCK.  A lock can be held by at most a single
    thread at any given time.  Our locks are not "recursive", that
    is, it is an error for the thread currently holding a lock to
@@ -188,8 +197,18 @@ lock_acquire (struct lock *lock) {
 	ASSERT (!intr_context ());
 	ASSERT (!lock_held_by_current_thread (lock));
 
-	sema_down (&lock->semaphore);
+	struct thread *curr = thread_current();
+	if (lock->holder)
+	{
+		list_insert_ordered(&(lock->holder->donation_list), &(curr->d_elem), cmp_sem_priority, NULL);
+		curr->wait_on_lock = lock;
+		donate_priority();
+	}
+
+	// sema down 해서 ready에서 cpu에 새로 넣음
+    sema_down (&lock->semaphore);
 	lock->holder = thread_current ();
+	curr->wait_on_lock = NULL;
 }
 
 /* Tries to acquires LOCK and returns true if successful or false
@@ -221,6 +240,10 @@ void
 lock_release (struct lock *lock) {
 	ASSERT (lock != NULL);
 	ASSERT (lock_held_by_current_thread (lock));
+
+	/* donation 관련 추가 */
+	remove_with_lock(lock);
+	refresh_priority();
 
 	lock->holder = NULL;
 	sema_up (&lock->semaphore);
