@@ -46,7 +46,6 @@ static struct list destruction_req;
 static long long idle_ticks;    /* # of timer ticks spent idle. */
 static long long kernel_ticks;  /* # of timer ticks in kernel threads. */
 static long long user_ticks;    /* # of timer ticks in user programs. */
-static long long global_ticks = INT64_MAX;
 
 /* Scheduling. */
 #define TIME_SLICE 4            /* # of timer ticks to give each thread. */
@@ -65,6 +64,9 @@ static void init_thread (struct thread *, const char *name, int priority);
 static void do_schedule(int status);
 static void schedule (void);
 static tid_t allocate_tid (void);
+
+/* global tick을 쓰레드 local tick 중 가장 작은 tick 값으로 update */
+void update_next_tick_to_awake(int64_t ticks);
 
 /* Returns true if T appears to point to a valid thread. */
 #define is_thread(t) ((t) != NULL && (t)->magic == THREAD_MAGIC)
@@ -95,6 +97,11 @@ static uint64_t gdt[3] = { 0, 0x00af9a000000ffff, 0x00cf92000000ffff };
 
    It is not safe to call thread_current() until this function
    finishes. */
+
+
+/* sleep_list에서 대기 중인 thread들의 tick 값 중 가장 작은 tick  */
+int64_t next_tick_to_awake = INT64_MAX;
+
 void
 thread_init (void) {
 	ASSERT (intr_get_level () == INTR_OFF);
@@ -364,15 +371,7 @@ thread_sleep (int64_t ticks) {
 	intr_set_level (old_level);
 }
 
-int64_t
-get_next_tick_to_awake(void){
-	return global_ticks;
-}
 
-void
-update_next_global_tick (int64_t ticks){
-	global_ticks = ticks;
-}
 
 /* Sets the current thread's priority to NEW_PRIORITY. */
 void
@@ -474,8 +473,9 @@ init_thread (struct thread *t, const char *name, int priority) {
 	strlcpy (t->name, name, sizeof t->name);
 	t->tf.rsp = (uint64_t) t + PGSIZE - sizeof (void *);
 	t->priority = priority;
+
 	t->magic = THREAD_MAGIC;
-	t->local_ticks = INT64_MAX;
+	t->tick_to_awake = INT64_MAX;
 }
 
 /* Chooses and returns the next thread to be scheduled.  Should
@@ -654,4 +654,14 @@ allocate_tid (void) {
 	lock_release (&tid_lock);
 
 	return tid;
+}
+/* global tick 업데이트 함수 */
+void update_next_tick_to_awake(int64_t ticks){
+	if (ticks < get_next_tick_to_awake()){
+		next_tick_to_awake = ticks;
+	}
+}
+/* global tick get 함수 */
+int64_t get_next_tick_to_awake(void){
+	return next_tick_to_awake;
 }

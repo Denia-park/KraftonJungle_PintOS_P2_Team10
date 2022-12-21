@@ -91,10 +91,13 @@ struct thread {
 	enum thread_status status;          /* Thread state. */
 	char name[16];                      /* Name (for debugging purposes). */
 	int priority;                       /* Priority. */
-	long long local_ticks;
 
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem;              /* List element. */
+	
+	/* sleep list의 thread 중에서의 가장 최소 local tick 값 =  global tick */
+	int64_t tick_to_awake;
+
 
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
@@ -134,12 +137,6 @@ const char *thread_name (void);
 void thread_exit (void) NO_RETURN;
 void thread_yield (void);
 
-void thread_sleep(int64_t ticks);
-void thread_awake(int64_t ticks);
-
-void update_next_global_tick (int64_t ticks);
-int64_t get_next_tick_to_awake(void);
-
 int thread_get_priority (void);
 void thread_set_priority (int);
 
@@ -147,6 +144,13 @@ int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
+
+/* thread_sleep & wake 관련 함수 추가 */
+void thread_sleep(int64_t ticks);
+void thread_awake(int64_t ticks);
+void update_next_tick_to_awake(int64_t ticks);
+int64_t get_next_tick_to_awake(void);
+
 
 void do_iret (struct intr_frame *tf);
 
