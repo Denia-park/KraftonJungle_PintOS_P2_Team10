@@ -320,55 +320,53 @@ thread_yield (void) {
 	intr_set_level (old_level);
 }
 
+/* sleep list에 local tick이 인자로 받은 ticks값보다 크거나 같은 쓰레드를 깨움
+현재 대기중인 스레들의 wakup_tick 변수 중 가장 작은 값을 global variable tick에 저장 
+ */
 void
 thread_awake (int64_t ticks) {
-	struct list_elem *cur_e;
-	enum intr_level old_level;
+	next_tick_to_awake = INT64_MAX;
+	struct thread *t;
+	struct list_elem *e;
+	
+	e = list_begin (&sleep_list);
 
-	int64_t next_awake_ticks = INT64_MAX;
+	while ( e != list_end(&sleep_list)) {
+		t = list_entry(e, struct thread, elem);
+		int64_t local_tick = t->tick_to_awake;
 
-	old_level = intr_disable ();
-
-    for (cur_e = list_begin (&sleep_list);
-        cur_e != list_end (&sleep_list);
-        ) {
-
-        struct thread *cur_thread = list_entry (cur_e, struct thread, elem);
-
-	    if (cur_thread ->local_ticks <= ticks){
-			cur_e = list_remove(cur_e);
-			thread_unblock(cur_thread);
+		if (local_tick <= ticks) {
+			/* sleep queue에서 삭제 */
+			e = list_remove(&t->elem);
+			/* state 변경 , push ready queue  */
+			thread_unblock(t);
 		} else {
-			if(cur_thread -> local_ticks < next_awake_ticks){
-				next_awake_ticks = cur_thread -> local_ticks;
-			}
-			cur_e = list_next (cur_e);
-		}	
-    }
+			e = list_next(e);
+			/* global tick 갱신 */
+			update_next_tick_to_awake(local_tick);
+		}
+	}
+}	
 
-	update_next_global_tick(next_awake_ticks);
-
-	intr_set_level (old_level);
-}
-
+/*  thread_sleep   
+현재 current가 idle이 아니라면 thread를 sleep queue에 삽입하고, blocked 상태로 만듬
+wake up을 위한 local tick을 저장하고,  
+global tick이랑 비교해서 더 작으면 global tick 갱신
+해당 과정 중엔 interrupt을 disable */
 void
 thread_sleep (int64_t ticks) {
 	struct thread *curr = thread_current ();
 	enum intr_level old_level;
 
 	ASSERT (!intr_context ());
-
-    if(ticks < get_next_tick_to_awake()){
-		update_next_global_tick(ticks);
-	}
-	if(ticks < curr->local_ticks){
-		curr->local_ticks = ticks;
-	}
-
 	old_level = intr_disable ();
-	if (curr != idle_thread)
+
+	if (curr != idle_thread) {
+		curr->tick_to_awake = ticks;		
+		update_next_tick_to_awake(ticks);
 		list_push_back (&sleep_list, &curr->elem);
-	do_schedule (THREAD_BLOCKED);
+	}	
+	do_schedule(THREAD_BLOCKED);
 	intr_set_level (old_level);
 }
 
