@@ -40,7 +40,7 @@ process_init (void) {
  * Notice that THIS SHOULD BE CALLED ONCE. */
 tid_t
 process_create_initd (const char *file_name) {
-	char *fn_copy;
+	char *fn_copy, *main_cmd;
 	tid_t tid;
 
 	/* Make a copy of FILE_NAME.
@@ -50,11 +50,18 @@ process_create_initd (const char *file_name) {
 		return TID_ERROR;
 	strlcpy (fn_copy, file_name, PGSIZE);
 
+	main_cmd = strtok(fn_copy, " ");
+
 	/* Create a new thread to execute FILE_NAME. */
-	tid = thread_create (file_name, PRI_DEFAULT, initd, fn_copy);
+	tid = thread_create (main_cmd, PRI_DEFAULT, initd, main_cmd);
 	if (tid == TID_ERROR)
 		palloc_free_page (fn_copy);
 	return tid;
+}
+
+void argument_stack(char **parse, int count, void **esp)
+{
+
 }
 
 /* A thread function that launches first user process. */
