@@ -19,3 +19,4 @@ utils/pintos
 utils/backtrace
 tests/make-grade
 userprog/build
+.vscode

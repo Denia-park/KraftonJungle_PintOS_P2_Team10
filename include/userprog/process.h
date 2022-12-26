@@ -9,5 +9,8 @@ int process_exec (void *f_name);
 int process_wait (tid_t);
 void process_exit (void);
 void process_activate (struct thread *next);
+// 내가 추가
+void argument_stack(char **, int , struct intr_frame *);
 
 #endif /* userprog/process.h */
+

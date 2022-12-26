@@ -46,22 +46,56 @@ process_create_initd (const char *file_name) {
 	/* Make a copy of FILE_NAME.
 	 * Otherwise there's a race between the caller and load(). */
 	fn_copy = palloc_get_page (0);
-	if (fn_copy == NULL)
+	if (!fn_copy)
 		return TID_ERROR;
 	strlcpy (fn_copy, file_name, PGSIZE);
 
-	main_cmd = strtok(fn_copy, " ");
+	// main_cmd = strtok(file_name, " ");
 
 	/* Create a new thread to execute FILE_NAME. */
-	tid = thread_create (main_cmd, PRI_DEFAULT, initd, main_cmd);
+	tid = thread_create (file_name, PRI_DEFAULT, initd, fn_copy);
 	if (tid == TID_ERROR)
 		palloc_free_page (fn_copy);
 	return tid;
 }
 
-void argument_stack(char **parse, int count, void **esp)
+void argument_stack(char **argv, int argc, struct intr_frame *if_)
 {
+	char *arg_addr[128];
 
+	// echo x y z : insert right to left
+
+	for (int i = argc - 1; i >= 0; i--)
+	{
+		int argv_len = strlen(argv[i]);
+		if_->rsp -= (argv_len + 1);
+		memcpy(if_->rsp, argv[i], argv_len + 1);
+		arg_addr[i] = if_->rsp;	// arg_addr 배열에 
+	}
+
+	// insert padding for single word alignment
+	while (if_->rsp % 8 != 0)
+	{
+		if_->rsp--;
+		*(uint8_t *)if_->rsp = 0x00;
+		// 1 바이트씩 내려주면서 0 넣어주면서 저장
+	}
+
+	if_->rsp -= 8;	// 8바이트 스택 주소 내리고
+	memset(if_->rsp, 0, sizeof(8));	// argv 주소의 마지막이라는 것을 알려주기 위해 0을 넣는다.
+
+	for (int i = argc - 1; i >= 0; i--)
+	{
+		if_->rsp -= 8;
+		memcpy(if_->rsp, &arg_addr[i], sizeof(char ***));
+	}
+
+	// fake return address
+	if_->rsp -= 8;
+	memset(if_->rsp, 0x00, sizeof(8));
+
+	if_->R.rdi = argc;	// ac 넣는다
+	if_->R.rsi = if_->rsp + 8;	// rsi에 argv[0] == argv 주소를 넣는다
 }
 
 /* A thread function that launches first user process. */
@@ -170,11 +204,14 @@ error:
 int
 process_exec (void *f_name) {
 	char *file_name = f_name;
+	char *parse[128];	// 128byte 제한
+	unsigned int count;	// argument count
 	bool success;
 
 	/* We cannot use the intr_frame in the thread structure.
 	 * This is because when current thread rescheduled,
 	 * it stores the execution information to the member. */
+	// 
 	struct intr_frame _if;
 	_if.ds = _if.es = _if.ss = SEL_UDSEG;
 	_if.cs = SEL_UCSEG;
@@ -182,17 +219,26 @@ process_exec (void *f_name) {
 
 	/* We first kill the current context */
 	process_cleanup ();
+	// strlen은 \n까지 새지 않기 떄문에 +1 을 해준다.
+	memcpy(parse, file_name, strlen(file_name) + 1);
 
 	/* And then load the binary */
-	success = load (file_name, &_if);
+	success = load (parse, &_if);
+
+	if (!success)
+		return -1;
+
 
 	/* If load failed, quit. */
 	palloc_free_page (file_name);
 	if (!success)
-		return -1;
+		thread_exit();
+
+	// 추가 (디버깅 용)
+	hex_dump(_if.rsp, _if.rsp, USER_STACK - _if.rsp, true);
 
 	/* Start switched process. */
-	do_iret (&_if);
+	do_iret(&_if);
 	NOT_REACHED ();
 }
 
@@ -211,6 +257,10 @@ process_wait (tid_t child_tid UNUSED) {
 	/* XXX: Hint) The pintos exit if process_wait (initd), we recommend you
 	 * XXX:       to add infinite loop here before
 	 * XXX:       implementing the process_wait. */
+	while (1)
+	{
+
+	}
 	return -1;
 }
 
@@ -336,6 +386,23 @@ load (const char *file_name, struct intr_frame *if_) {
 	bool success = false;
 	int i;
 
+	/* TODO: Your code goes here.
+	 * TODO: Implement argument passing (see project2/argument_passing.html). */
+	// 내가 추가
+	char *arg_list[128];
+	char *token, *save_ptr;
+	int token_cnt = 0;
+
+	token = strtok_r(file_name, " ", &save_ptr);
+	arg_list[token_cnt] = token;
+
+	while (token != NULL)
+	{
+		token = strtok_r(NULL, " ", &save_ptr);
+		token_cnt++;
+		arg_list[token_cnt] = token;
+	}
+
 	/* Allocate and activate page directory. */
 	t->pml4 = pml4_create ();
 	if (t->pml4 == NULL)
@@ -418,13 +485,13 @@ load (const char *file_name, struct intr_frame *if_) {
 	if (!setup_stack (if_))
 		goto done;
 
-	/* Start address. */
-	if_->rip = ehdr.e_entry;
-
-	/* TODO: Your code goes here.
-	 * TODO: Implement argument passing (see project2/argument_passing.html). */
+	// parsing해서 argument 스택에 넘겨줬다.
+	argument_stack(arg_list, token_cnt, if_);
 
 	success = true;
+	
+	/* Start address. */
+	if_->rip = ehdr.e_entry;
 
 done:
 	/* We arrive here whether the load is successful or not. */
