@@ -165,6 +165,10 @@ process_exec (void *f_name) {
 	char *file_name = f_name;
 	bool success;
 
+	/*원본에서 복사해와서 복사본으로 작업함*/
+	char file_name_copy[20];
+	memcpy(file_name_copy, file_name, strlen(file_name)+1);
+
 	/* We cannot use the intr_frame in the thread structure.
 	 * This is because when current thread rescheduled,
 	 * it stores the execution information to the member. */
@@ -177,12 +181,15 @@ process_exec (void *f_name) {
 	process_cleanup ();
 
 	/* And then load the binary */
-	success = load (file_name, &_if);
+	// success = load (file_name, &_if);
+	success = load (file_name_copy, &_if);
 
 	/* If load failed, quit. */
 	palloc_free_page (file_name);
 	if (!success)
 		return -1;
+
+	hex_dump(_if.rsp, _if.rsp, USER_STACK - _if.rsp, true);
 
 	/* Start switched process. */
 	do_iret (&_if);
@@ -204,6 +211,7 @@ process_wait (tid_t child_tid UNUSED) {
 	/* XXX: Hint) The pintos exit if process_wait (initd), we recommend you
 	 * XXX:       to add infinite loop here before
 	 * XXX:       implementing the process_wait. */
+	while(1) {}
 	return -1;
 }
 
@@ -329,6 +337,20 @@ load (const char *file_name, struct intr_frame *if_) {
 	bool success = false;
 	int i;
 
+	/* argument parsing을 위한 사전 준비 */
+	char *argv[128];
+	int argc = 0;
+	char *temp, *temp_ptr;
+
+	temp = strtok_r(file_name, " ", &temp_ptr);
+	argv[0] = temp; /* 첫번째 인자는 명령어 */
+	while (temp != NULL)
+	{
+		temp = strtok_r(NULL, " ", &temp_ptr);
+		argc ++;
+		argv[argc] = temp;
+	}
+
 	/* Allocate and activate page directory. */
 	t->pml4 = pml4_create ();
 	if (t->pml4 == NULL)
@@ -417,6 +439,9 @@ load (const char *file_name, struct intr_frame *if_) {
 	/* TODO: Your code goes here.
 	 * TODO: Implement argument passing (see project2/argument_passing.html). */
 
+	/* passing argument */
+	argument_stack(argv, argc, if_);
+
 	success = true;
 
 done:
@@ -425,6 +450,50 @@ done:
 	return success;
 }
 
+void
+argument_stack(char **argv, int argc, struct intr_frame *if_){
+	char *arg_addr[128];
+
+	/* 스택은 아래로 확장하기 때문에 마지막 인자부터 삽입하여 높은 주소에 저장한다. */
+	for (int i = argc - 1; i >= 0; i--)
+	{
+		/* strlen(argv[i])+1 만큼 rsp를 내리고, 그 공간에 argv[i]를 복사 */
+		if_->rsp = if_->rsp - (strlen(argv[i]) + 1);
+		memcpy(if_->rsp, argv[i], (strlen(argv[i]) + 1));
+		arg_addr[i] = if_->rsp;
+	}
+	/* 
+	표를 참고하여 word-aglign : 
+	8의 배수로 down하기 위한 padding 삽입 
+	*/
+	while (if_->rsp % 8 != 0)
+	{
+		if_->rsp--;
+		*(uint8_t *)if_->rsp = 0;
+	}
+	
+
+	for (int i = argc; i >= 0; i--)
+	{							 /* 주소는 NULL 포함하여 삽입 */
+		if_->rsp = if_->rsp - 8; /* 8 바이트 다운 */
+		if (i == argc)
+		{ /* argv 가장 위엔 데이터 0 삽입 */
+			memset(if_->rsp, 0, sizeof(char **));
+		}
+		else
+		{  /* arg_addrr 값 삽입, char** 의 크기느 8바이트 */
+			memcpy(if_->rsp, &arg_addr[i], sizeof(char **)); 
+		}
+	}
+
+	if_->R.rdi = argc;
+	/* fake return address 위의 첫번째 agv address 를 가리키는 값을 저장 */
+	if_->R.rsi = if_->rsp;  
+
+	/* fake return address */
+	if_->rsp = if_->rsp - 8; /* void point : 8byte */
+	memset(if_->rsp, 0, sizeof(void *));
+}
 
 /* Checks whether PHDR describes a valid, loadable segment in
  * FILE and returns true if so, false otherwise. */
