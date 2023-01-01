@@ -114,10 +114,11 @@ void thread_init(void)
 	/* Init the globla thread context */
 	lock_init(&tid_lock);
 	list_init(&ready_list);
+	list_init(&destruction_req);
 
 	/* sleep_list 초기화 */
 	list_init(&sleep_list);
-	list_init(&destruction_req);
+	next_tick_to_awake = INT64_MAX;
 
 	/* Set up a thread structure for the running thread. */
 	initial_thread = running_thread();
@@ -327,9 +328,7 @@ void thread_awake(int64_t ticks)
 {
 	next_tick_to_awake = INT64_MAX;
 	struct thread *t;
-	struct list_elem *e;
-
-	e = list_begin(&sleep_list);
+	struct list_elem *e = list_begin(&sleep_list);
 
 	while (e != list_end(&sleep_list))
 	{
@@ -364,13 +363,14 @@ void thread_sleep(int64_t ticks)
 
 	ASSERT(!intr_context());
 	old_level = intr_disable();
-
+	// 수정
+	curr->tick_to_awake = ticks;
 	if (curr != idle_thread)
 	{
-		curr->tick_to_awake = ticks;
-		update_next_tick_to_awake(ticks);
 		list_push_back(&sleep_list, &curr->elem);
 	}
+	// 수정
+	update_next_tick_to_awake(ticks);
 	do_schedule(THREAD_BLOCKED);
 	intr_set_level(old_level);
 }
@@ -496,6 +496,13 @@ init_thread(struct thread *t, const char *name, int priority)
 
 	// fd 관련 멤버 초기화
 	memset(t->fdt, 0, 64 * sizeof(t->fdt));
+	t->fdt[0] = 1;
+	t->fdt[1] = 2;
+	list_init(&t->child_list);
+	t->exit_status = 0;
+
+	// 내가 추가
+	sema_init(&t->sema_fork, 0);
 }
 
 /* Chooses and returns the next thread to be scheduled.  Should

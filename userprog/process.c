@@ -22,6 +22,9 @@
 #include "vm/vm.h"
 #endif
 
+// 내가 추가
+#include "threads/synch.h"
+
 static void process_cleanup(void);
 static bool load(const char *file_name, struct intr_frame *if_);
 static void initd(void *f_name);
@@ -42,6 +45,7 @@ process_init(void)
 tid_t process_create_initd(const char *file_name)
 {
 	char *fn_copy, *main_cmd;
+	char *save_ptr;
 	tid_t tid;
 
 	/* Make a copy of FILE_NAME.
@@ -51,11 +55,11 @@ tid_t process_create_initd(const char *file_name)
 		return TID_ERROR;
 	strlcpy(fn_copy, file_name, PGSIZE);
 
-	// main_cmd = strtok(file_name, " ");
+	main_cmd = strtok_r(file_name, " ", &save_ptr);
 
 	/* Create a new thread to execute FILE_NAME. */
 	// 받은 file_name으로 thread 이름을 설정한 후, 생성한다.
-	tid = thread_create(file_name, PRI_DEFAULT, initd, fn_copy);
+	tid = thread_create(main_cmd, PRI_DEFAULT, initd, fn_copy);
 	if (tid == TID_ERROR)
 		palloc_free_page(fn_copy);
 	return tid;
@@ -120,8 +124,35 @@ initd(void *f_name)
 tid_t process_fork(const char *name, struct intr_frame *if_ UNUSED)
 {
 	/* Clone current thread to new thread.*/
-	return thread_create(name,
-						 PRI_DEFAULT, __do_fork, thread_current());
+	struct thread *parent = thread_current();
+	memcpy(&parent->parent_if, if_, sizeof(struct intr_frame));
+
+	tid_t pid = thread_create(name, PRI_DEFAULT, __do_fork, parent);
+
+	// error면 -1 반환
+	if (pid == TID_ERROR)
+		return TID_ERROR;
+
+	struct thread *child = get_child(pid);
+	if (child->exit_status == -1)
+		return TID_ERROR;
+	sema_down(&child->sema_fork);
+
+	return pid;
+}
+
+struct thread *get_child(int pid)
+{
+	struct thread *curr = thread_current();
+	struct list *child_list = &curr->child_list;
+
+	for (struct list_elem *e = list_begin(child_list); e != list_end(child_list); e = list_next(e))
+	{
+		struct thread *t = list_entry(e, struct thread, child_elem);
+		if (t->tid == pid)
+			return t;
+	}
+	return NULL;
 }
 
 #ifndef VM
@@ -137,22 +168,28 @@ duplicate_pte(uint64_t *pte, void *va, void *aux)
 	bool writable;
 
 	/* 1. TODO: If the parent_page is kernel page, then return immediately. */
-
+	if (is_kernel_vaddr(va))
+		return true;
 	/* 2. Resolve VA from the parent's page map level 4. */
 	parent_page = pml4_get_page(parent->pml4, va);
-
+	if (!parent_page)
+		return false;
 	/* 3. TODO: Allocate new PAL_USER page for the child and set result to
 	 *    TODO: NEWPAGE. */
-
+	newpage = palloc_get_page(PAL_USER | PAL_ZERO);
+	if (!newpage)
+		return false;
 	/* 4. TODO: Duplicate parent's page to the new page and
 	 *    TODO: check whether parent's page is writable or not (set WRITABLE
 	 *    TODO: according to the result). */
-
+	memcpy(newpage, parent_page, PGSIZE);
+	writable = is_writable(pte);
 	/* 5. Add new page to child's page table at address VA with WRITABLE
 	 *    permission. */
 	if (!pml4_set_page(current->pml4, va, newpage, writable))
 	{
 		/* 6. TODO: if fail to insert page, do error handling. */
+		return false;
 	}
 	return true;
 }
@@ -169,11 +206,12 @@ __do_fork(void *aux)
 	struct thread *parent = (struct thread *)aux;
 	struct thread *current = thread_current();
 	/* TODO: somehow pass the parent_if. (i.e. process_fork()'s if_) */
-	struct intr_frame *parent_if;
+	struct intr_frame *parent_if = &parent->parent_if;
 	bool succ = true;
 
 	/* 1. Read the cpu context to local stack. */
 	memcpy(&if_, parent_if, sizeof(struct intr_frame));
+	if_.R.rax = 0;
 
 	/* 2. Duplicate PT */
 	current->pml4 = pml4_create();
@@ -196,13 +234,32 @@ __do_fork(void *aux)
 	 * TODO:       from the fork() until this function successfully duplicates
 	 * TODO:       the resources of parent.*/
 
+	// fd가 64면 에러
+	if (parent->next_fd == 128)
+		goto error;
+	// 부모의 모든 정보 복사
+	current->fdt[0] = parent->fdt[0];
+	current->fdt[1] = parent->fdt[1];
+
+	for (int i = 2; i < 128; i++)
+	{
+		struct file *fp = parent->fdt[i];
+		if (!fp)
+			current->fdt[i] = NULL;
+		else
+			current->fdt[i] = file_duplicate(fp);
+	}
+	current->next_fd = parent->next_fd;
+	sema_up(&current->sema_fork);
 	process_init();
 
 	/* Finally, switch to the newly created process. */
 	if (succ)
 		do_iret(&if_);
 error:
-	thread_exit();
+	sema_up(&current->sema_fork);
+	exit(TID_ERROR);
+	// thread_exit();
 }
 
 /* Switch the current execution context to the f_name.
@@ -210,7 +267,7 @@ error:
 int process_exec(void *f_name)
 {
 	char *file_name = f_name;
-	char *parse[128];	// 128byte 제한
+	// char *parse[128];	// 128byte 제한
 	unsigned int count; // argument count
 	bool success;
 
@@ -226,21 +283,21 @@ int process_exec(void *f_name)
 	/* We first kill the current context */
 	process_cleanup();
 	// strlen은 \n까지 새지 않기 떄문에 +1 을 해준다.
-	memcpy(parse, file_name, strlen(file_name) + 1);
+	// memcpy(parse, file_name, strlen(file_name) + 1);
 
 	/* And then load the binary */
-	success = load(parse, &_if);
+	// success = load(parse, &_if);
+	success = load(file_name, &_if);
+	palloc_free_page(file_name);
+	/* If load failed, quit. */
+	// if (!success)
+	// 	thread_exit();
 
 	if (!success)
 		return -1;
 
-	/* If load failed, quit. */
-	palloc_free_page(file_name);
-	if (!success)
-		thread_exit();
-
 	// 추가 (디버깅 용)
-	hex_dump(_if.rsp, _if.rsp, USER_STACK - _if.rsp, true);
+	// hex_dump(_if.rsp, _if.rsp, USER_STACK - _if.rsp, true);
 
 	/* Start switched process. */
 	do_iret(&_if);
@@ -261,23 +318,40 @@ int process_wait(tid_t child_tid UNUSED)
 	/* XXX: Hint) The pintos exit if process_wait (initd), we recommend you
 	 * XXX:       to add infinite loop here before
 	 * XXX:       implementing the process_wait. */
-	while (1)
-	{
-	}
-	return -1;
+	struct thread *child = get_child(child_tid);
+	if (!child)
+		return -1;
+
+	sema_down(&child->sema_wait);
+	int exit_status = child->exit_status;
+	list_remove(&child->child_elem);
+	sema_up(&child->sema_exit);
+	return exit_status;
 }
 
 /* Exit the process. This function is called by thread_exit (). */
 void process_exit(void)
 {
 	struct thread *curr = thread_current();
+	struct file **table = curr->fdt;
 	/* TODO: Your code goes here.
 	 * TODO: Implement process termination message (see
 	 * TODO: project2/process_termination.html).
 	 * TODO: We recommend you to implement process resource cleanup here. */
-	printf("see project2/process_termination.html");
-	curr->run_file = NULL;
+	if (curr->run_file)
+		file_close(curr->run_file);
+	for (int i = 2; i < 128; i++)
+	{
+		if (table[i])
+		{
+			file_close(table[i]);
+			table[i] = NULL;
+		}
+	}
+	sema_up(&curr->sema_wait);
+	sema_down(&curr->sema_exit);
 
+	palloc_free_page(table);
 	process_cleanup();
 }
 
@@ -426,9 +500,6 @@ load(const char *file_name, struct intr_frame *if_)
 		printf("load: %s: open failed\n", file_name);
 		goto done;
 	}
-	// 내가 추가
-	file_deny_write(file);
-	t->run_file = file;
 
 	/* Read and verify executable header. */
 	if (file_read(file, &ehdr, sizeof ehdr) != sizeof ehdr || memcmp(ehdr.e_ident, "\177ELF\2\1\1", 7) || ehdr.e_type != 2 || ehdr.e_machine != 0x3E // amd64
@@ -499,18 +570,20 @@ load(const char *file_name, struct intr_frame *if_)
 	/* Set up stack. */
 	if (!setup_stack(if_))
 		goto done;
+	/* Start address. */
+	if_->rip = ehdr.e_entry;
 
 	// parsing해서 argument 스택에 넘겨줬다.
 	argument_stack(arg_list, token_cnt, if_);
 
 	success = true;
 
-	/* Start address. */
-	if_->rip = ehdr.e_entry;
+	// 내가 추가
+	t->run_file = file;
+	file_deny_write(file);
 
 done:
 	/* We arrive here whether the load is successful or not. */
-	file_close(file);
 	// file_close 안에 file_allow_write() 포함되어 있음
 	return success;
 }

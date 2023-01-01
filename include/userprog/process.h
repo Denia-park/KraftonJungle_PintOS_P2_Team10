@@ -3,14 +3,14 @@
 
 #include "threads/thread.h"
 
-tid_t process_create_initd (const char *file_name);
-tid_t process_fork (const char *name, struct intr_frame *if_);
-int process_exec (void *f_name);
-int process_wait (tid_t);
-void process_exit (void);
-void process_activate (struct thread *next);
+tid_t process_create_initd(const char *file_name);
+tid_t process_fork(const char *name, struct intr_frame *if_ UNUSED);
+int process_exec(void *f_name);
+int process_wait(tid_t);
+void process_exit(void);
+void process_activate(struct thread *next);
 // 내가 추가
-void argument_stack(char **, int , struct intr_frame *);
+void argument_stack(char **, int, struct intr_frame *rsp);
+struct thread *get_child(int pid);
 
 #endif /* userprog/process.h */
-

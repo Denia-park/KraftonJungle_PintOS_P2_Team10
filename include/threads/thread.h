@@ -118,10 +118,23 @@ struct thread
 	struct lock *wait_on_lock; // 쓰레드가 기다리고 있는 lock 자료구조 주소 저장
 	struct list donation_list; // donation 리스트 (multiple donation)
 	struct file **fdt;		   // file descriptor table 64개 할당
+	int next_fd;
+	// TODO: what is run_file
 	struct file *run_file;
 
 	/* Shared between thread.c and synch.c. */
 	struct list_elem d_elem; // 도네이션 element
+
+	// exit status
+	int exit_status;
+	struct list child_list;
+
+	// fork element
+	struct list_elem child_elem;
+	struct intr_frame parent_if;
+	struct semaphore sema_fork;
+	struct semaphore sema_wait;
+	struct semaphore sema_exit;
 };
 
 /* If false (default), use round-robin scheduler.
