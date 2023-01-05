@@ -9,8 +9,6 @@
 #include "vm/vm.h"
 #endif
 
-#define USERPROG
-
 /* States in a thread's life cycle. */
 enum thread_status
 {
@@ -100,6 +98,9 @@ struct thread
 
 	/* sleep list의 thread 중에서의 가장 최소 local tick 값 =  global tick */
 	int64_t tick_to_awake;
+	struct semaphore sema_fork;
+	struct semaphore sema_wait;
+	struct semaphore sema_exit;
 
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
@@ -132,9 +133,7 @@ struct thread
 	// fork element
 	struct list_elem child_elem;
 	struct intr_frame parent_if;
-	struct semaphore sema_fork;
-	struct semaphore sema_wait;
-	struct semaphore sema_exit;
+	struct thread *parent_thread;
 };
 
 /* If false (default), use round-robin scheduler.

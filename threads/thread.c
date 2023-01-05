@@ -213,6 +213,12 @@ tid_t thread_create(const char *name, int priority,
 	t->tf.cs = SEL_KCSEG;
 	t->tf.eflags = FLAG_IF;
 
+	// 내가 추가
+	t->parent_thread = thread_current();
+	sema_init(&t->sema_fork, 0);
+	sema_init(&t->sema_exit, 0);
+	sema_init(&t->sema_wait, 0);
+
 	thread_unblock(t);
 	/* create 후 ready_list에 add 시 new thread와 current thread의 우선순위 비교,
 	만약 새로운 쓰레드의 우선순위가 더 높으면 schedule 호출하고 현재 쓰레드는 yield */
@@ -500,9 +506,6 @@ init_thread(struct thread *t, const char *name, int priority)
 	t->fdt[1] = 2;
 	list_init(&t->child_list);
 	t->exit_status = 0;
-
-	// 내가 추가
-	sema_init(&t->sema_fork, 0);
 }
 
 /* Chooses and returns the next thread to be scheduled.  Should
